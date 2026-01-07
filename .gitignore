@@ -1,0 +1,12 @@
+# Ignore RStudio temporary files
+*.Rproj.user
+*.Rhistory
+*.RData
+*.Rapp.history
+*.Rhistory
+
+# Ignore figures if you regenerate them
+figs/*
+
+# Ignore macOS system files
+.DS_Store

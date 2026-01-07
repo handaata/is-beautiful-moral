@@ -1,0 +1,427 @@
+---
+title: "AnalysisReport_Exp3B"
+author: "Dawn Han"
+date: "2026-01-04"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  fig.width = 7,
+  fig.height = 4,
+  fig.path = "../figs/",
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{css echo = FALSE}
+body {
+  font-size: 16px;
+}
+```
+
+
+
+# Research Question: Is There Automatic Association Between Attractiveness, Morality, and Vanity At the Implicit Cognitive Level?
+
+## Basic Info
+
+**Research type:** Experimental, quantitative, reaction-time based
+
+**Role:** End-to-end (experiment design -\> data collection -\> data cleaning -\> analysis -\> interpretation)\
+
+**Method:** IAT (Implicit Association Test)
+
+**Analysis**: Multilevel modeling (crossed random effects)
+
+**Tools:** R, tidyverse, ggplot2, lmerTest, R Markdown
+
+## Why this matters
+
+When making inference about others' trustworthiness, ethics and credibility, people often rely on visual cues such as attractiveness.
+Prior studies in this project have shown that attractive individuals are assumed to be moral, but this effect is attenuated to the extent that the attracive individuals look vain. 
+
+This study tests whether these **assumed association between attractiveness, morality, and vaniy appear in automatic and implicit cognitive level**. 
+
+## Data & Experimental Design
+
+Participants classified words as moral, immoral, or attractive using keyboard responses, with additional distractor words classified via the space bar. Distractors were either vanity-related or color-related (control), depending on condition. Across two test blocks, attractiveness was paired with either morality or immorality on the same response key. Response latencies were compared across blocks to index the strength of association between morality and attractiveness. Associative strength was then compared between the vanity-prime and color-prime conditions.
+
+
+## Analysis
+
+### 1. Setup
+
+#### Load Libraries
+
+```{r }
+
+library(psych)
+library(dplyr)
+library(tidyr)
+library(forcats)
+library(ggplot2)
+library(kableExtra)#for HTML formatted table
+library(ez) #ez_anova for repeated/mixed anova
+library(lmerTest) # for lme
+library(stringr) 
+library(gtsummary)
+library(rstatix) #pairwise ttest
+
+```
+
+
+#### Read data
+```{r }
+dat <- read.csv("../data/processed_data/data_Std3B_clean.csv")
+```
+
+#### Preview of data
+```{r include=TRUE}
+head(dat,5)
+```
+
+
+### 2. Prepare Variables
+
+Categorical variables were factorized and effect-coded to support multilevel modeling.
+
+```{r }
+
+dat <- dat %>%
+  # Rename variable, congruent to a more intuitive name
+  rename(pairing = congruent,
+         targetword = stimulusitem1,
+         targetcat = target) %>%
+  mutate(
+    # Recode numeric pairing variable into meaningful pairing conditions
+    pairing = recode(pairing,
+                          `c` = "attractive-moral",
+                          `i` = "attractive-immoral"),
+    
+    # Convert variables with characters to factors
+    across(where(is.character), ~ factor(.x, levels = unique(.x))),
+
+    # Explicitly set factor levels (reference first)
+    distract = factor(distract, levels = c("color", "vain")),
+    pairing   = factor(pairing,   levels = c("attractive-moral", "attractive-immoral")),
+
+    # Other categorical variables into factor
+    across(c(order, subject, targetword, moralleft), factor))
+  
+
+```
+
+
+### 3. Sanity Check and Data Cleaning
+
+#### 3.1 Sanity Check of Continous Variable: Latency
+**1) Check descriptives for latency**
+```{r}
+
+dat %>%
+  select(latency) %>%
+  psych::describe() %>%
+  knitr::kable(digits = 2) %>%
+  kable_styling()
+
+```
+
+**2) Visual check of latency distribution**
+```{r}
+ggplot(dat, aes(x = latency)) + 
+  geom_histogram(bins = 50) + 
+  xlim(-100, 4000) #limiting maximum latency for better visualization (~ 4sec is sensible maximum latency)
+
+```
+<br>
+**Note:** There are latency values below 0, indicating techincal errors. Latency is right-skewed and non-normal, which is common for task time measures. 
+
+#### 3.2 Check Frequency Of Other Categorical Variables  
+Note: No red flags from categorical values.
+```{r results=FALSE}
+
+categorical_vars <- names(dat)[sapply(dat, is.factor)]
+
+for (v in categorical_vars) {
+  cat("\n---", v, "---\n")
+  print(table(dat[[v]]))
+}
+```
+
+<br>
+<br>
+
+### 4. Data Preparation for SC-IAT
+#### 4.1 Cleaning Latency Variable: Keep latencies > 0
+
+```{r results=FALSE}
+dat <- dat %>%
+  mutate(latency_cleaned = if_else(latency > 0, latency, NA_real_)) 
+
+# check range of latency
+range(dat$latency_cleaned, na.rm = TRUE)
+```
+
+#### 4.2 Outlier Removal
+Trials exceeding ±2.5 MAD (Median absolute deviation) from the median latency were excluded.
+Note: This is a robust outliler detection method for latency data (especially for fast type decision) which is often right skewed. It uses median and variability around median, less affected by extreme values than mean and SD. 
+
+```{r }
+mad_val <- mad(dat$latency_cleaned, na.rm = TRUE)
+med_val <- median(dat$latency_cleaned, na.rm = TRUE)
+  
+dat <- dat %>%
+  mutate(
+    latency_outlierexclude = if_else(
+      abs(latency_cleaned - med_val) <= 2.5 * mad_val,
+      latency_cleaned,
+      NA_real_)
+  )
+
+```
+
+
+#### 4.3 Log-transform Latency
+Response latencies were log-transformed to reduce positive skew and improve adherence to model assumptions common in reaction-time data, particularly, Homoscedasticity,  Normality of residuals, and correct error structure (additive and systematic error) assumptions.
+
+Note: Using the raw latency values did not change the conclusion, but log-transformation was used for more robust effect size estimation.
+
+```{r }
+dat <- dat %>% 
+  mutate(log_latency = log(latency_outlierexclude))
+
+```
+
+#### 4.4 Contrast Coding for Pairing and Distract Conditions
+**Methodological Notes:**
+
+* 'pairing' (attractive-moral vs attractive-immoral) and 'distract' (color vs vain) were **effects-coded** (-0.5, 0.5). 
+
+* This facilitates the interpretation of pairing main effect, which is the **difference in latency between the two pairing blocks averaged across two distractor conditions (color and vanity)** (i.e., attractiveness-morality association strength). 
+
+```{r}
+dat <- dat %>% mutate(  
+    # Effects Coding for pairing (attractive-moral = -0.5, attractive-immoral = + 0.5)
+    pairing.e = ifelse(pairing == "attractive-moral", -0.5, 0.5),
+
+    distract.e = ifelse(distract == "color", -0.5, 0.5))
+
+```
+
+<br>
+<br>
+
+### 5. Multilevel Analyses for SC-IAT
+
+#### 5.1 Does Priming the Concept of Vanity Modulate Automatic Attractiveness-Morality Associations?
+
+**Test of Distractor X Word pairing interaction during test trials**
+
+```{r, warning=FALSE, message=FALSE, include=TRUE}
+
+model.log<- lmer(log_latency ~ pairing.e*distract.e+ 
+                   (1|subject) + (1|targetword), 
+                 data =dat[
+                   dat$blocknum %in% c(3,6) & 
+                   dat$targetcat!="distractor",
+                   ]
+                 )
+
+tbl_regression(model.log, 
+               label = list(
+                 pairing.e = "Pairing Condition",
+                 distract.e = "Distractor Condition")
+               )
+
+```
+**Methodological Notes:** 
+
+* Trial inclusion: Analyses were restricted to test trials involving target concepts. Trials containing distractor words (color- or vanity-related) were excluded because they do not directly index the associative strength between targets and moral attributes.
+
+* Coding of predictors: Effect coding was applied to pairing and distractor conditions. The main effect of pairing represents the average attractive-moral association across two conditions (color and vanity). 
+
+* The interaction effect: How pairing differences change in the vanity condition relative to control.  
+
+* Random effects structure: Random intercepts for participants and target words were included to account for repeated observations and item-level variability.
+
+
+### Graphs plotting predicted mean and ci
+
+```{r, results = FALSE}
+# Fit the model using the categorical variable without using constrast coding (this gives the same results)
+model<-lmer(log_latency ~ pairing*distract + (1|subject) + (1|targetword), data =dat[dat$blocknum %in% c(3,6) & dat$targetcat!="distractor",])
+summary(model)
+
+newdat <- expand.grid(
+  distract=c("color","vain")
+  , pairing=c("attractive-moral","attractive-immoral")
+  , log_latency = 0
+)
+
+# Get predicted log_latency from the model
+newdat$log_latency <- predict(model,newdat,re.form=NA)
+
+# Calculate confidence intervals
+mm <- model.matrix(terms(model),newdat)
+pvar1 <- diag(mm %*% tcrossprod(vcov(model),mm))
+tvar1 <- pvar1+VarCorr(model.log)$subject[1]+VarCorr(model.log)$targetword[1]  
+cmult <- 1.96 
+newdat <- data.frame(
+  newdat
+  , plo = newdat$log_latency-cmult*sqrt(pvar1)
+  , phi = newdat$log_latency+cmult*sqrt(pvar1)
+  , tlo = newdat$log_latency-cmult*sqrt(tvar1)
+  , thi = newdat$log_latency+cmult*sqrt(tvar1)
+)
+names(newdat)[1] <-"Distractor"
+names(newdat)[2] <-"Word pairing"
+newdat
+
+newdat$latency <- exp(newdat$log_latency)
+newdat$exp_plo <- exp(newdat$log_latency-cmult*sqrt(pvar1))
+newdat$exp_phi <- exp(newdat$log_latency+cmult*sqrt(pvar1))
+  
+#function to transform data to y positions
+trans <- function(x){x-550}
+yticks <- c(0,600,700,800,900,1000)
+#function to transform data
+newdat$mean_t<-trans(newdat$latency)
+
+ggplot(newdat, aes(x= `Distractor`, y = mean_t, fill = `Word pairing`))+
+  geom_bar(position=position_dodge(), stat="identity")+ 
+  scale_y_continuous(limits=c(0,450), breaks = trans(yticks),labels = yticks)+
+  labs(y = "Mean response latency (ms)")+
+  geom_errorbar(aes(ymin=trans(exp_plo), ymax=trans(exp_phi)),
+                width=.25,                    # Width of the CI
+                position=position_dodge(.9))+
+  geom_rect(aes(xmin = 0.2, xmax = 2.5, ymin = 16, ymax = 30), fill = "white")+
+  scale_fill_grey(labels = c("Attractive-Moral","Attractive-Immoral"))+
+  scale_x_discrete(labels = c("Control","Vain"))
+
+
+```
+
+**Note:** Bars represent model-estimated geometric mean task time (ms) with 95% confidence intervals, derived from a mixed-effects model fit to log-transformed response times.
+
+**Interpretation:**
+```{r}
+# Extract fixed effect estimates
+coef_log <- fixef(model.log)
+
+# Exponentiate and subtract 1 to get proportional change
+proportionchange <- exp(coef_log) -1 
+  
+# Baseline RT (Grand Mean RT across all conditions)
+baseline_rt <- exp(coef_log["(Intercept)"])
+
+# Difference between pairing conditions
+pairing_rt <- baseline_rt*proportionchange["pairing.e"]
+
+# Extract p values
+coef_summary <- coef(summary(model.log))
+p_values <- coef_summary[,"Pr(>|t|)"]
+
+
+#Calculate CI
+lowCI <- round((exp(0.12) -1 )* exp(coef_log["(Intercept)"]),1)
+highCI <- round((exp(0.14) -1 )* exp(coef_log["(Intercept)"]),1)
+
+```
+* Participants responded  **`r round(pairing_rt,1)` ms** (95% CI [`r lowCI`, `r highCI`]) faster on Attractive-Moral compared to Attractive-Immoral trials, indicating **implicit attractiveness-morality association** (p = `r round(p_values['pairing.e'], 3)`).
+
+* The pairing effect was reduced in the vanity condition compared to control, as shown by a significant interaction (b = `r round(coef_log['pairing.e:distract.e'],2)`, p = `r round(p_values['pairing.e:distract.e'],3)`), indicating that vanity moderates the association between attractiveness and morality.
+
+<br>
+<br>
+
+### 5.2 Understanding Interaction
+#### 5-2 a. Attractiveness-Morality Association In Control Condition
+**Testing Pairing Effect In Control Condition**
+
+```{r, warning=FALSE, message=FALSE, include=TRUE}
+model.control<- lmer(log_latency ~ pairing.e + (1|subject) + (1|targetword), data =dat[dat$blocknum %in% c(3,6) & dat$targetcat!="distractor" & dat$distract=="color",])
+
+tbl_regression(model.control, 
+               label = list(
+                 pairing.e = "Pairing Condition")
+               )
+```
+
+**Interpretation**
+```{r}
+
+# Baseline RT (Grand Mean RT across all conditions)
+baseline_rt.control <- exp(fixef(model.control)["(Intercept)"])
+
+# Difference between pairing conditions
+pairing_rt.control <- baseline_rt*(exp(fixef(model.control)["pairing.e"])-1)
+
+# Extract p values
+coef_summary <- coef(summary(model.control))
+p_values <- coef_summary[,"Pr(>|t|)"]
+
+
+#Calculate CI
+lowCI <- round((exp(0.13) -1 )*baseline_rt.control,1)
+highCI <- round((exp(0.15) -1 )*baseline_rt.control,1)
+```
+
+* In **Control** condition, participants responded **`r round(pairing_rt.control,1)` ms (95% CI [`r lowCI`, `r highCI`]) faster** on Attractive-Moral compared to Attractive-Immoral trials, indicating automatic **attractiveness-morality association** on implicit level (p < `r round(p_values['pairing.e'], 3)`).
+
+
+### 5-2b. Attractiveness-Morality Association In Vanity Condition
+**Testin Pairing Effect In vanity condition**
+
+```{r, warning=FALSE, message=FALSE, include=TRUE}
+model.vain<- lmer(log_latency ~ pairing.e + (1|subject) + (1|targetword), data =dat[dat$blocknum %in% c(3,6) & dat$targetcat!="distractor" & dat$distract=="vain",])
+
+
+tbl_regression(model.vain, 
+               label = list(
+                 pairing.e = "Pairing Condition")
+               )
+```
+
+**Interpretation**
+```{r}
+# Baseline RT (Grand Mean RT across all conditions)
+baseline_rt.vain <- exp(fixef(model.vain)["(Intercept)"])
+
+# Difference between pairing conditions
+pairing_rt.vain <- baseline_rt*(exp(fixef(model.vain)["pairing.e"])-1)
+
+# Extract p values
+coef_summary <- coef(summary(model.vain))
+p_values <- coef_summary[,"Pr(>|t|)"]
+
+#Calculate CI
+lowCI <- round((exp(0.10) -1 )*baseline_rt.vain)
+highCI <- round((exp(0.13) -1 )*baseline_rt.vain)
+```
+
+* In **Vanity** condition, participants responded  **`r round(pairing_rt.vain,1)` ms (95% CI [`r lowCI`, `r highCI`]) faster** on Attractive-Moral compared to Attractive-Immoral trials, (p < `r round(p_values['pairing.e'], 3)`), which is an attenuated attractiveness-morality association compared to control condition.
+
+
+## 5.3 Robustness Check: Assessing the Impact of Procedural Factors (Block Ordering and Key Assignment)
+
+The interaction between pairing and distractor condition was not altered by 1) which side of the keys was mapped on (F or J), or 2) the order of blocks (attractiveness-morality first vs. attractiveness-immorality first).
+
+```{r}
+
+#interaction with both methods factors
+model.m<- lmer(log_latency ~ pairing.e*distract.e*order*moralleft + (1|subject) + (1|targetword), data =dat[dat$blocknum %in% c(3,6) & dat$targetcat!="distractor",])
+
+
+tbl_regression(model.m, 
+               label = list(
+                 pairing.e = "Pairing Condition",
+                 distract.e = "Distractor Condition",
+                 order  = "Block Order",
+                 moralleft = "Key side")
+               )
+```
