@@ -9,7 +9,6 @@ An experimental data analysis project examining how attractiveness cues influenc
 ## Methods and Data
 Participants classified words as moral, immoral, or attractive using keyboard responses, with additional distractor words classified via the space bar. Distractors were either vanity-related or color-related (control), depending on condition. The responses and latency were logged per trial. Across two test blocks, attractiveness was paired with either morality or immorality on the same response key. Discrepancies in response latency between the two test blocks indicate the strength of association between morality and attractiveness. Associative strength was then compared between the vanity-prime and color-prime conditions.
 
-
 ## Key Analyses
 - Data cleaning, feature construction, Data Joining
 - Sanity check
@@ -24,8 +23,4 @@ Participants classified words as moral, immoral, or attractive using keyboard re
 - `preparation/` – R script for cleaning, feature engineering, and joining dataset
 - `analysis/` – R Markdown document containing data manipulation, analysis, visualizations, and interpretations.
 
-
-## Tools & Methods
-- **R**: Data cleaning, transformation, and visualization (`tidyverse`, `ggplot2`)  
-- **R Markdown**: Reproducible workflow integrating code, plots, and interpretation  
 
