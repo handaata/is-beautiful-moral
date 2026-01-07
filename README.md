@@ -2,6 +2,7 @@
 
 ## Project Overview
 An experimental data analysis project examining how attractiveness cues influence moral judgments, using trial-level behavioral data and validation-focused data cleaning in R.
+
 **Type:** Experimental, quantitative  
 **Tools:** R, dplyr, tidyr, lmerTest, ggplot2, R Markdown  
 **Author:** Da Eun Han
