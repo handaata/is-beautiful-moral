@@ -23,4 +23,10 @@ Participants classified words as moral, immoral, or attractive using keyboard re
 - `preparation/` – R script for cleaning, feature engineering, and joining dataset
 - `analysis/` – R Markdown document containing data manipulation, analysis, visualizations, and interpretations.
 
+## Reference
+This repository contains a self-contained reanalysis and visualization of key findings from the published study, adapted for portfolio and methodological demonstration purposes. It does not include the full set of studies or analyses reported in the original article
+
+Primary publication:
+
+Han, D., & Laurent, S. M. (2023). Beautiful seems good, but perhaps not in every way: Linking attractiveness to moral evaluation through perceived vanity. Journal of Personality and Social Psychology, 124(2), 264–280.
 
